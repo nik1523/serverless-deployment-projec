@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Serverless Web Application</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .container { background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .status { padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin: 5px; }
+        button:hover { background: #0056b3; }
+        .response { background: #f8f9fa; border: 1px solid #dee2e6; padding: 15px; border-radius: 4px; margin: 10px 0; }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .metric { background: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .metric h3 { margin: 0 0 10px 0; color: #333; }
+        .metric .value { font-size: 24px; font-weight: bold; color: #007bff; }
+    </style>
+</head>
+<body>
+    <h1>🚀 Serverless Web Application</h1>
+    
+    <div class="container">
+        <h2>Environment Status</h2>
+        <div class="metrics">
+            <div class="metric">
+                <h3>Development</h3>
+                <div class="value" id="dev-status">Checking...</div>
+                <button onclick="testEnvironment('dev')">Test Dev API</button>
+            </div>
+            <div class="metric">
+                <h3>Production</h3>
+                <div class="value" id="prod-status">Checking...</div>
+                <button onclick="testEnvironment('prod')">Test Prod API</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>API Testing</h2>
+        <button onclick="loadTest()">Run Load Test</button>
+        <button onclick="checkMetrics()">View Metrics</button>
+        <button onclick="checkCosts()">Cost Report</button>
+        
+        <div id="results"></div>
+    </div>
+
+    <div class="container">
+        <h2>Architecture Features</h2>
+        <div class="status info">
+            <strong>✅ Implemented Features:</strong><br>
+            • Multi-environment support (dev/staging/prod)<br>
+            • X-Ray tracing integration<br>
+            • SNS notifications<br>
+            • CloudWatch dashboards<br>
+            • Secrets Manager integration<br>
+            • Shared Lambda layers<br>
+            • Blue/green deployments<br>
+            • Auto-scaling configuration<br>
+            • Cost monitoring & budgets<br>
+            • Complete documentation
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Quick Links</h2>
+        <button onclick="openDashboard('dev')">Dev Dashboard</button>
+        <button onclick="openDashboard('prod')">Prod Dashboard</button>
+        <button onclick="openXRay()">X-Ray Console</button>
+        <button onclick="openBudgets()">Cost & Budgets</button>
+    </div>
+
+    <script>
+        const API_ENDPOINTS = {
+            dev: 'https://19y33kq4ti.execute-api.ap-south-1.amazonaws.com/Prod/hello/',
+            prod: 'https://d793b22f5g.execute-api.ap-south-1.amazonaws.com/Prod/hello/'
+        };
+
+        const DASHBOARDS = {
+            dev: 'https://ap-south-1.console.aws.amazon.com/cloudwatch/home?region=ap-south-1#dashboards:name=serverless-app-dev-dev',
+            prod: 'https://ap-south-1.console.aws.amazon.com/cloudwatch/home?region=ap-south-1#dashboards:name=serverless-app-prod-prod'
+        };
+
+        async function testEnvironment(env) {
+            const statusElement = document.getElementById(`${env}-status`);
+            statusElement.textContent = 'Testing...';
+            
+            try {
+                const response = await fetch(API_ENDPOINTS[env]);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    statusElement.textContent = '✅ Online';
+                    statusElement.style.color = '#28a745';
+                    showResult(`${env.toUpperCase()} API Response:`, data);
+                } else {
+                    statusElement.textContent = '❌ Error';
+                    statusElement.style.color = '#dc3545';
+                    showResult(`${env.toUpperCase()} API Error:`, data);
+                }
+            } catch (error) {
+                statusElement.textContent = '❌ Failed';
+                statusElement.style.color = '#dc3545';
+                showResult(`${env.toUpperCase()} Connection Error:`, { error: error.message });
+            }
+        }
+
+        async function loadTest() {
+            showResult('Load Test', { status: 'Running 50 requests to production API...' });
+            
+            const promises = [];
+            for (let i = 0; i < 50; i++) {
+                promises.push(fetch(API_ENDPOINTS.prod));
+            }
+            
+            try {
+                const results = await Promise.all(promises);
+                const successCount = results.filter(r => r.ok).length;
+                showResult('Load Test Results', {
+                    total: 50,
+                    successful: successCount,
+                    failed: 50 - successCount,
+                    successRate: `${(successCount/50*100).toFixed(1)}%`
+                });
+            } catch (error) {
+                showResult('Load Test Error', { error: error.message });
+            }
+        }
+
+        function checkMetrics() {
+            showResult('Metrics', { 
+                message: 'Check CloudWatch dashboards for real-time metrics',
+                dev: 'Click "Dev Dashboard" to view development metrics',
+                prod: 'Click "Prod Dashboard" to view production metrics'
+            });
+        }
+
+        function checkCosts() {
+            showResult('Cost Information', {
+                budget: '$50/month for production environment',
+                alerts: 'Notifications at 80% actual and 100% forecasted spend',
+                tracking: 'Resources tagged for cost attribution',
+                note: 'Run cost-report.sh script for detailed analysis'
+            });
+        }
+
+        function showResult(title, data) {
+            const results = document.getElementById('results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'response';
+            resultDiv.innerHTML = `<strong>${title}</strong><pre>${JSON.stringify(data, null, 2)}</pre>`;
+            results.appendChild(resultDiv);
+            results.scrollTop = results.scrollHeight;
+        }
+
+        function openDashboard(env) {
+            window.open(DASHBOARDS[env], '_blank');
+        }
+
+        function openXRay() {
+            window.open('https://ap-south-1.console.aws.amazon.com/xray/home?region=ap-south-1#/traces', '_blank');
+        }
+
+        function openBudgets() {
+            window.open('https://console.aws.amazon.com/billing/home#/budgets', '_blank');
+        }
+
+        // Auto-test environments on load
+        window.onload = function() {
+            testEnvironment('dev');
+            testEnvironment('prod');
+        };
+    </script>
+</body>
+</html>

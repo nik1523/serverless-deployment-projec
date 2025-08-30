@@ -1,26 +1,278 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Serverless Web Application
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+    - dev
+    - staging
+    - prod
+  LogLevel:
+    Type: String
+    Default: DEBUG
+  DatabasePassword:
+    Type: String
+    Default: ''
+    NoEcho: true
+Conditions:
+  IsProduction:
+    Fn::Equals:
+    - Ref: Environment
+    - prod
 Globals:
   Function:
-    Timeout: 3
+    Timeout: 30
     Runtime: nodejs18.x
+    Tracing: Active
+    Environment:
+      Variables:
+        TABLE_NAME:
+          Ref: UserTable
+        LOG_LEVEL:
+          Ref: LogLevel
+        ENVIRONMENT:
+          Ref: Environment
+        SECRETS_ARN:
+          Ref: AppSecrets
+        _X_AMZN_TRACE_ID:
+          Ref: AWS::NoValue
+  Api:
+    TracingEnabled: true
 Resources:
+  CommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName:
+        Fn::Sub: ${AWS::StackName}-common-${Environment}
+      Description: Common utilities and dependencies
+      ContentUri: CommonLayer
+      CompatibleRuntimes:
+      - nodejs18.x
+    Metadata:
+      BuildMethod: nodejs18.x
+      SamResourceId: CommonLayer
   HelloWorldFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: HelloWorldFunction
       Handler: app.lambdaHandler
+      Layers:
+      - Ref: CommonLayer
+      AutoPublishAlias: live
+      DeploymentPreference:
+        Type:
+          Fn::If:
+          - IsProduction
+          - Canary10Percent5Minutes
+          - AllAtOnce
+        Alarms:
+        - Ref: AliasErrorMetricGreaterThanZeroAlarm
+        - Ref: LatestVersionErrorMetricGreaterThanZeroAlarm
       Events:
         HelloWorld:
           Type: Api
           Properties:
             Path: /hello
             Method: get
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: UserTable
+      - AWSXRayDaemonWriteAccess
+      - Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - secretsmanager:GetSecretValue
+          Resource:
+            Ref: AppSecrets
     Metadata:
       SamResourceId: HelloWorldFunction
+  UserTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: ${AWS::StackName}-users-${Environment}
+      AttributeDefinitions:
+      - AttributeName: id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: id
+        KeyType: HASH
+      BillingMode:
+        Fn::If:
+        - IsProduction
+        - PROVISIONED
+        - PAY_PER_REQUEST
+      ProvisionedThroughput:
+        Fn::If:
+        - IsProduction
+        - ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        - Ref: AWS::NoValue
+  UserTableReadCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: IsProduction
+    Properties:
+      MaxCapacity: 100
+      MinCapacity: 5
+      ResourceId:
+        Fn::Sub: table/${UserTable}
+      RoleARN:
+        Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/aws-service-role/dynamodb.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_DynamoDBTable
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      ServiceNamespace: dynamodb
+  UserTableWriteCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: IsProduction
+    Properties:
+      MaxCapacity: 100
+      MinCapacity: 5
+      ResourceId:
+        Fn::Sub: table/${UserTable}
+      RoleARN:
+        Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/aws-service-role/dynamodb.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_DynamoDBTable
+      ScalableDimension: dynamodb:table:WriteCapacityUnits
+      ServiceNamespace: dynamodb
+  UserTableReadCapacityScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: IsProduction
+    Properties:
+      PolicyName: ReadAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId:
+        Ref: UserTableReadCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+  UserTableWriteCapacityScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: IsProduction
+    Properties:
+      PolicyName: WriteAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId:
+        Ref: UserTableWriteCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
+  DeploymentNotifications:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName:
+        Fn::Sub: ${AWS::StackName}-notifications-${Environment}
+      DisplayName:
+        Fn::Sub: Deployment notifications for ${Environment}
+  AppSecrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-secrets-${Environment}
+      Description:
+        Fn::Sub: Application secrets for ${Environment}
+      SecretString:
+        Fn::Sub: "{\n  \"database_password\": \"${DatabasePassword}\",\n  \"api_key\"\
+          : \"placeholder-key-${Environment}\",\n  \"jwt_secret\": \"jwt-secret-${Environment}\"\
+          \n}\n"
+  ApplicationDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName:
+        Fn::Sub: ${AWS::StackName}-${Environment}
+      DashboardBody:
+        Fn::Sub: "{\n  \"widgets\": [\n    {\n      \"type\": \"metric\",\n      \"\
+          x\": 0, \"y\": 0, \"width\": 12, \"height\": 6,\n      \"properties\": {\n\
+          \        \"metrics\": [\n          [\"AWS/Lambda\", \"Invocations\", \"\
+          FunctionName\", \"${HelloWorldFunction}\"],\n          [\".\", \"Errors\"\
+          , \".\", \".\"],\n          [\".\", \"Duration\", \".\", \".\"]\n      \
+          \  ],\n        \"period\": 300,\n        \"stat\": \"Sum\",\n        \"\
+          region\": \"${AWS::Region}\",\n        \"title\": \"Lambda Metrics\"\n \
+          \     }\n    },\n    {\n      \"type\": \"metric\",\n      \"x\": 12, \"\
+          y\": 0, \"width\": 12, \"height\": 6,\n      \"properties\": {\n       \
+          \ \"metrics\": [\n          [\"AWS/ApiGateway\", \"Count\", \"ApiName\"\
+          , \"${ServerlessRestApi}\"],\n          [\".\", \"4XXError\", \".\", \"\
+          .\"],\n          [\".\", \"5XXError\", \".\", \".\"]\n        ],\n     \
+          \   \"period\": 300,\n        \"stat\": \"Sum\",\n        \"region\": \"\
+          ${AWS::Region}\",\n        \"title\": \"API Gateway Metrics\"\n      }\n\
+          \    },\n    {\n      \"type\": \"metric\",\n      \"x\": 0, \"y\": 6, \"\
+          width\": 24, \"height\": 6,\n      \"properties\": {\n        \"metrics\"\
+          : [\n          [\"AWS/DynamoDB\", \"ConsumedReadCapacityUnits\", \"TableName\"\
+          , \"${UserTable}\"],\n          [\".\", \"ConsumedWriteCapacityUnits\",\
+          \ \".\", \".\"]\n        ],\n        \"period\": 300,\n        \"stat\"\
+          : \"Sum\",\n        \"region\": \"${AWS::Region}\",\n        \"title\":\
+          \ \"DynamoDB Metrics\"\n      }\n    }\n  ]\n}\n"
+  AliasErrorMetricGreaterThanZeroAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Lambda function errors
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 2
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Period: 60
+      Statistic: Sum
+      Threshold: 0
+      Dimensions:
+      - Name: FunctionName
+        Value:
+          Ref: HelloWorldFunction
+      - Name: Resource
+        Value:
+          Fn::Sub: ${HelloWorldFunction}:live
+  LatestVersionErrorMetricGreaterThanZeroAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Lambda function errors on latest version
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 2
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Period: 60
+      Statistic: Sum
+      Threshold: 0
+      Dimensions:
+      - Name: FunctionName
+        Value:
+          Ref: HelloWorldFunction
+      - Name: Resource
+        Value:
+          Fn::Sub: ${HelloWorldFunction}:$LATEST
 Outputs:
   HelloWorldApi:
     Description: API Gateway endpoint URL
     Value:
       Fn::Sub: https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/
+  HelloWorldFunction:
+    Description: Hello World Lambda Function ARN
+    Value:
+      Fn::GetAtt:
+      - HelloWorldFunction
+      - Arn
+  UserTable:
+    Description: DynamoDB table name
+    Value:
+      Ref: UserTable
+  NotificationTopic:
+    Description: SNS topic for deployment notifications
+    Value:
+      Ref: DeploymentNotifications
+  Dashboard:
+    Description: CloudWatch dashboard URL
+    Value:
+      Fn::Sub: https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-${Environment}
+  SecretsArn:
+    Description: Secrets Manager ARN
+    Value:
+      Ref: AppSecrets
+  CommonLayerArn:
+    Description: Common Layer ARN
+    Value:
+      Ref: CommonLayer

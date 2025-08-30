@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS Config rules and guardrails for governance
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+
+Resources:
+  # Config Configuration Recorder
+  ConfigurationRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties:
+      Name: !Sub "serverless-config-recorder-${Environment}"
+      RoleARN: !GetAtt ConfigRole.Arn
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: true
+
+  # Config Delivery Channel
+  DeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties:
+      Name: !Sub "serverless-delivery-channel-${Environment}"
+      S3BucketName: !Ref ConfigBucket
+
+  # S3 Bucket for Config
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "serverless-config-${Environment}-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # IAM Role for Config
+  ConfigRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/ConfigRole
+      Policies:
+        - PolicyName: ConfigBucketPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketAcl
+                  - s3:ListBucket
+                Resource: !GetAtt ConfigBucket.Arn
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${ConfigBucket.Arn}/*"
+
+  # Guardrail: Lambda functions must have encryption
+  LambdaEncryptionRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: lambda-function-encryption-required
+      Description: Checks if Lambda functions have encryption enabled
+      Source:
+        Owner: AWS
+        SourceIdentifier: LAMBDA_FUNCTION_SETTINGS_CHECK
+      InputParameters: |
+        {
+          "desiredEncryption": "true"
+        }
+
+  # Guardrail: DynamoDB tables must have encryption
+  DynamoDBEncryptionRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: dynamodb-table-encryption-enabled
+      Description: Checks if DynamoDB tables have encryption enabled
+      Source:
+        Owner: AWS
+        SourceIdentifier: DYNAMODB_TABLE_ENCRYPTION_ENABLED
+
+  # Guardrail: S3 buckets must block public access
+  S3PublicAccessRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: s3-bucket-public-access-prohibited
+      Description: Checks if S3 buckets prohibit public access
+      Source:
+        Owner: AWS
+        SourceIdentifier: S3_BUCKET_PUBLIC_ACCESS_PROHIBITED
+
+  # Guardrail: Required tags
+  RequiredTagsRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: required-tags
+      Description: Checks if resources have required tags
+      Source:
+        Owner: AWS
+        SourceIdentifier: REQUIRED_TAGS
+      InputParameters: |
+        {
+          "tag1Key": "Environment",
+          "tag2Key": "Project",
+          "tag3Key": "Owner"
+        }
+
+  # CloudWatch Alarm for Config compliance
+  ComplianceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "config-compliance-${Environment}"
+      AlarmDescription: Alert when Config rules are non-compliant
+      MetricName: ComplianceByConfigRule
+      Namespace: AWS/Config
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !Sub "{{resolve:ssm:/serverless-app/${Environment}/sns/notifications-arn}}"
+
+Outputs:
+  ConfigBucketName:
+    Description: Config S3 Bucket Name
+    Value: !Ref ConfigBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-ConfigBucket"

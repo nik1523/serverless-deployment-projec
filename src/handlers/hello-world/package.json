@@ -1,15 +1,8 @@
 {
-  "name": "hello-world-function",
+  "name": "hello-world-handler",
   "version": "1.0.0",
-  "description": "Hello World Lambda function",
-  "main": "app.js",
   "dependencies": {
-    "aws-sdk": "^2.1000.0"
-  },
-  "devDependencies": {
-    "jest": "^29.0.0"
-  },
-  "scripts": {
-    "test": "jest"
+    "aws-sdk": "^2.1691.0",
+    "aws-xray-sdk-core": "^3.8.0"
   }
 }

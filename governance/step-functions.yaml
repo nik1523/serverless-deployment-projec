@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Step Functions orchestration for serverless workflows
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+
+Resources:
+  # Step Functions for orchestration
+  DataProcessingWorkflow:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "data-processing-${Environment}"
+      DefinitionUri: step-functions/data-processing.json
+      DefinitionSubstitutions:
+        ProcessDataFunction: !Sub "{{resolve:ssm:/serverless-app/${Environment}/lambda/process-data-arn}}"
+        ValidateDataFunction: !Sub "{{resolve:ssm:/serverless-app/${Environment}/lambda/validate-data-arn}}"
+        NotificationTopic: !Sub "{{resolve:ssm:/serverless-app/${Environment}/sns/notifications-arn}}"
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Sub "serverless-app-${Environment}-*"
+        - SNSPublishMessagePolicy:
+            TopicName: !Sub "serverless-app-${Environment}-notifications"
+      Events:
+        ScheduledExecution:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+            Input: !Sub |
+              {
+                "environment": "${Environment}",
+                "timestamp": "$$.Execution.StartTime"
+              }
+
+  # Deployment orchestration workflow
+  DeploymentWorkflow:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "deployment-orchestration-${Environment}"
+      DefinitionUri: step-functions/deployment.json
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - codedeploy:*
+                - lambda:*
+                - cloudformation:*
+              Resource: "*"
+
+Outputs:
+  DataProcessingWorkflowArn:
+    Description: Data Processing Workflow ARN
+    Value: !Ref DataProcessingWorkflow
+    Export:
+      Name: !Sub "${AWS::StackName}-DataProcessing-ARN"
