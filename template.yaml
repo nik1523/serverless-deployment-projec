@@ -4,14 +4,18 @@ Description: Serverless Web Application
 
 Globals:
   Function:
-    Timeout: 3
+    Timeout: 30
     Runtime: nodejs18.x
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref UserTable
 
 Resources:
+  # Lambda Function
   HelloWorldFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/
+      CodeUri: src/handlers/hello-world/
       Handler: app.lambdaHandler
       Events:
         HelloWorld:
@@ -19,8 +23,27 @@ Resources:
           Properties:
             Path: /hello
             Method: get
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserTable
+
+  # DynamoDB Table
+  UserTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey:
+        Name: id
+        Type: String
 
 Outputs:
   HelloWorldApi:
     Description: "API Gateway endpoint URL"
     Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
+  
+  HelloWorldFunction:
+    Description: "Hello World Lambda Function ARN"
+    Value: !GetAtt HelloWorldFunction.Arn
+    
+  UserTable:
+    Description: "DynamoDB table name"
+    Value: !Ref UserTable
