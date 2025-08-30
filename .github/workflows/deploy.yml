@@ -1,0 +1,92 @@
+name: Deploy Serverless Application
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+          
+      - name: Install dependencies
+        run: |
+          pip install pytest boto3 moto
+          pip install -r src/handlers/requirements.txt
+          
+      - name: Run tests
+        run: pytest src/tests/ -v
+
+  deploy-dev:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+          
+      - name: Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Build and deploy
+        run: |
+          sam build --template-file infrastructure/template.yaml
+          sam deploy --no-confirm-changeset --no-fail-on-empty-changeset \
+            --stack-name serverless-app-dev \
+            --parameter-overrides Environment=dev \
+            --capabilities CAPABILITY_IAM \
+            --region ${{ env.AWS_REGION }}
+
+  deploy-prod:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+          
+      - name: Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Build and deploy
+        run: |
+          sam build --template-file infrastructure/template.yaml
+          sam deploy --no-confirm-changeset --no-fail-on-empty-changeset \
+            --stack-name serverless-app-prod \
+            --parameter-overrides Environment=prod \
+            --capabilities CAPABILITY_IAM \
+            --region ${{ env.AWS_REGION }}

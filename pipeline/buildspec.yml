@@ -1,0 +1,38 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install aws-sam-cli
+      - pip install pytest boto3 moto
+      
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws --version
+      - sam --version
+      
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Running tests...
+      - pytest src/tests/ -v
+      - echo Building SAM application...
+      - sam build --template-file infrastructure/template.yaml
+      
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Deploying application...
+      - sam deploy --no-confirm-changeset --no-fail-on-empty-changeset
+        --stack-name $STACK_NAME
+        --parameter-overrides Environment=$ENVIRONMENT
+        --capabilities CAPABILITY_IAM
+        --region $AWS_DEFAULT_REGION
+
+artifacts:
+  files:
+    - '**/*'
+  base-directory: .aws-sam/build
