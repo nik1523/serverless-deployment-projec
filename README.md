@@ -4,6 +4,10 @@ A production-ready serverless web application demonstrating enterprise-grade AWS
 
 ## 🏗️ Architecture Overview
 
+### AWS System Architecture
+![AWS System Architecture](aws_system_architecture.png)
+
+### High-Level Architecture Flow
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │   GitHub Repo   │───▶│  Step Functions  │───▶│ Lambda Functions│
